@@ -136,92 +136,95 @@ var localAppMockAPI = function(req, res, next) {
 
 		return res.end();
 
-	} else if (isFakeRespond(req)) {
-		var post;
-		if (req.method === 'POST') {
-			var body = {};
-			req.on('data', function (data) {
-				body += data;
-			});
-			req.on('end', function () {
-				post = body;
-			});
-		}
-
-		var mockReqRespMapKey = req._parsedUrl.pathname
-			var responseObj = mockReqRespMap[mockReqRespMapKey];
-		if (responseObj == undefined) {
-			mockReqRespMapKey = req.url;
-			if (mockReqRespMapKey.indexOf("?") >= 0)
-				mockReqRespMapKey = reparsePath(mockReqRespMapKey);
-			responseObj = mockReqRespMap[req.url];
-		}
-		
-		if (responseObj["id"] !== undefined) {
-			var template = templateMap[responseObj["id"]];
-			if (template == undefined) {
-				res.writeHead(500, {
-					'Content-Type' : 'application/json'
+	} else if (isFakeRespond(req) || isInterceptXHR(req)) {
+		if(isFakeRespond(req)) {
+			var post;
+			if (req.method === 'POST') {
+				var body = {};
+				req.on('data', function (data) {
+					body += data;
 				});
-				res.write('{"status":"failed","message":"There is no template for the provided ID"}');
-				return res.end();
+				req.on('end', function () {
+					post = body;
+				});
 			}
-			var pairs = responseObj["keyValues"];
-			if (typeof pairs === 'string') {
-				pairs = JSON.parse(pairs);
+
+			var mockReqRespMapKey = req._parsedUrl.pathname
+			var responseObj = mockReqRespMap[mockReqRespMapKey];
+			if (responseObj == undefined) {
+				mockReqRespMapKey = req.url;
+				if (mockReqRespMapKey.indexOf("?") >= 0)
+					mockReqRespMapKey = reparsePath(mockReqRespMapKey);
+				responseObj = mockReqRespMap[req.url];
 			}
-			var output = mustache.render(template, pairs);
-			res.writeHead(responseObj["statusCode"], {
-				'Content-Type' : responseObj["contentType"],
+
+			if (responseObj["id"] !== undefined) {
+				var template = templateMap[responseObj["id"]];
+				if (template == undefined) {
+					res.writeHead(500, {
+						'Content-Type' : 'application/json'
+					});
+					res.write('{"status":"failed","message":"There is no template for the provided ID"}');
+					return res.end();
+				}
+				var pairs = responseObj["keyValues"];
+				if (typeof pairs === 'string') {
+					pairs = JSON.parse(pairs);
+				}
+				var output = mustache.render(template, pairs);
+				res.writeHead(responseObj["statusCode"], {
+					'Content-Type' : responseObj["contentType"],
+					'Access-Control-Allow-Origin' : '*'
+				});
+
+				if (responseObj["eval"] !== undefined) {
+					var f = eval("(" + responseObj["eval"] + ")");
+					res.write(f(req, output), post);
+				} else {
+					res.write(output);
+				}
+
+				record("Responded with mock for: " + mockReqRespMapKey, 0);
+
+			} else {
+				res.writeHead(responseObj["statusCode"], responseObj["header"]);
+				var responseText="";
+				if(responseObj["responseFile"] !== undefined){
+					responseText = fs.readFileSync(responseObj["responseFile"]);
+
+				}else
+				{
+					responseText= responseObj["responseText"];
+				}
+
+				if (responseObj["delayTime"] > 0)
+					sleep(responseObj["delayTime"]);
+				if (responseObj["eval"] !== undefined) {
+					var f = eval("(" + responseObj["eval"] + ")");
+					res.write(f(req, responseText), post);
+				} else {
+					res.write(responseText);
+				}
+
+				record("Responded with mock for: " + mockReqRespMapKey, 0);
+			}
+		}
+		if(isInterceptXHR(req)) {
+			if (req.method === 'POST') {
+				addInterceptedXHR(req, req.body);
+			} else {
+				addInterceptedXHR(req, null);
+			}
+
+			res.writeHead(200, {
+				'Content-Type' : 'application/json',
 				'Access-Control-Allow-Origin' : '*'
 			});
+			res.write('{"status":"success","message":"XHR intercepted"}');
 
-			if (responseObj["eval"] !== undefined) {
-				var f = eval("(" + responseObj["eval"] + ")");
-				res.write(f(req, output), post);
-			} else {
-				res.write(output);
-			}
-
-			record("Responded with mock for: " + mockReqRespMapKey, 0);
-
-		} else {
-			res.writeHead(responseObj["statusCode"], responseObj["header"]);
-			var responseText="";
-			if(responseObj["responseFile"] !== undefined){
-				responseText = fs.readFileSync(responseObj["responseFile"]);
-				
-			}else
-			{
-				responseText= responseObj["responseText"];
-			}
-			
-			if (responseObj["delayTime"] > 0)
-				sleep(responseObj["delayTime"]);
-			if (responseObj["eval"] !== undefined) {
-				var f = eval("(" + responseObj["eval"] + ")");
-				res.write(f(req, responseText), post);
-			} else {
-				res.write(responseText);
-			}
-
-			record("Responded with mock for: " + mockReqRespMapKey, 0);
+			record("Intercepted XHR for: " + req.url, 0);
 		}
-		return res.end();
-	} else if (isInterceptXHR(req)) {
-		if (req.method === 'POST') {
-			addInterceptedXHR(req, req.body);
-		} else {
-			addInterceptedXHR(req, null);
-		}
-
-		res.writeHead(200, {
-			'Content-Type' : 'application/json',
-			'Access-Control-Allow-Origin' : '*'
-		});
-		res.write('{"status":"success","message":"XHR intercepted"}');
-
-		record("Intercepted XHR for: " + req.url, 0);
+		
 		return res.end();
 	} else {
         if(extensions){
